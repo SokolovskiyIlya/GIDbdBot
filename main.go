@@ -388,3 +388,5 @@ func formatDays(days int) string {
 		return "дней"
 	}
 }
+
+//коммент для теста
