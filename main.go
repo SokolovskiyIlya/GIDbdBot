@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
+
 	_ "github.com/mattn/go-sqlite3"
 	"gopkg.in/telebot.v3"
 )
@@ -27,6 +29,11 @@ var (
 )
 
 func main() {
+	// Загружаем .env
+	if err := godotenv.Load(); err != nil {
+		log.Println("Файл .env не найден")
+	}
+
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	if err := initDB(); err != nil {
