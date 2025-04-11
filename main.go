@@ -308,45 +308,53 @@ func getAllActiveChats() ([]int64, error) {
 }
 
 func startDailyBirthdayChecker(bot *telebot.Bot) {
+	// Первая проверка сразу при запуске
+	checkAndNotifyBirthdays(bot)
+
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
 	for {
-		employees, err := getAllEmployees()
-		if err != nil {
-			log.Println("Ошибка проверки дней рождения:", err)
-			time.Sleep(1 * time.Hour)
-			continue
-		}
-
-		activeChats, err := getAllActiveChats()
-		if err != nil {
-			log.Println("Ошибка получения списка чатов:", err)
-			time.Sleep(1 * time.Hour)
-			continue
-		}
-
-		for _, emp := range employees {
-			daysUntil := daysUntilBirthday(emp.Birthday)
-
-			if (daysUntil == 14 || daysUntil == 7 || daysUntil == 1 || daysUntil == 0) &&
-				emp.LastNotifyDay != daysUntil {
-				msg := createNotificationMessage(emp.Name, daysUntil, emp.Birthday)
-				for _, chatID := range activeChats {
-					if _, err := bot.Send(telebot.ChatID(chatID), msg); err != nil {
-						log.Printf("Ошибка отправки в чат %d: %v", chatID, err)
-					}
-				}
-
-				if err := updateLastNotifyDay(emp.ID, daysUntil); err != nil {
-					log.Println("Ошибка обновления дня уведомления:", err)
-				}
+		select {
+		case <-ticker.C:
+			now := time.Now()
+			// Если сейчас 10:00 по МСК, делаем проверку
+			if now.Hour() == 7 && now.Minute() < 10 { // 10:00 МСК = 07:00 UTC
+				checkAndNotifyBirthdays(bot)
 			}
 		}
+	}
+}
 
-		now := time.Now()
-		nextCheck := time.Date(now.Year(), now.Month(), now.Day()+1, 10, 0, 0, 0, time.Local)
-		if now.Hour() >= 10 {
-			nextCheck = nextCheck.AddDate(0, 0, 1)
+func checkAndNotifyBirthdays(bot *telebot.Bot) {
+	employees, err := getAllEmployees()
+	if err != nil {
+		log.Println("Ошибка проверки дней рождения:", err)
+		return
+	}
+
+	activeChats, err := getAllActiveChats()
+	if err != nil {
+		log.Println("Ошибка получения списка чатов:", err)
+		return
+	}
+
+	for _, emp := range employees {
+		daysUntil := daysUntilBirthday(emp.Birthday)
+
+		if (daysUntil == 14 || daysUntil == 7 || daysUntil == 1 || daysUntil == 0) &&
+			emp.LastNotifyDay != daysUntil {
+			msg := createNotificationMessage(emp.Name, daysUntil, emp.Birthday)
+			for _, chatID := range activeChats {
+				if _, err := bot.Send(telebot.ChatID(chatID), msg); err != nil {
+					log.Printf("Ошибка отправки в чат %d: %v", chatID, err)
+				}
+			}
+
+			if err := updateLastNotifyDay(emp.ID, daysUntil); err != nil {
+				log.Println("Ошибка обновления дня уведомления:", err)
+			}
 		}
-		time.Sleep(time.Until(nextCheck))
 	}
 }
 
