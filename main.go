@@ -308,8 +308,14 @@ func getAllActiveChats() ([]int64, error) {
 }
 
 func startDailyBirthdayChecker(bot *telebot.Bot) {
+	location, err := time.LoadLocation("Europe/Moscow")
+	if err != nil {
+		log.Println("Ошибка загрузки локации:", err)
+		location = time.UTC
+	}
+
 	// Первая проверка сразу при запуске
-	checkAndNotifyBirthdays(bot)
+	checkAndNotifyBirthdays(bot, location)
 
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
@@ -317,16 +323,15 @@ func startDailyBirthdayChecker(bot *telebot.Bot) {
 	for {
 		select {
 		case <-ticker.C:
-			now := time.Now()
-			// Если сейчас 10:00 по МСК, делаем проверку
-			if now.Hour() == 7 && now.Minute() < 10 { // 10:00 МСК = 07:00 UTC
-				checkAndNotifyBirthdays(bot)
-			}
+			checkAndNotifyBirthdays(bot, location)
 		}
 	}
 }
 
-func checkAndNotifyBirthdays(bot *telebot.Bot) {
+func checkAndNotifyBirthdays(bot *telebot.Bot, location *time.Location) {
+	now := time.Now().In(location)
+	log.Printf("Проверка дней рождения в %s", now.Format("2006-01-02 15:04:05 MST"))
+
 	employees, err := getAllEmployees()
 	if err != nil {
 		log.Println("Ошибка проверки дней рождения:", err)
@@ -341,13 +346,19 @@ func checkAndNotifyBirthdays(bot *telebot.Bot) {
 
 	for _, emp := range employees {
 		daysUntil := daysUntilBirthday(emp.Birthday)
+		log.Printf("Проверка %s: дней до ДР - %d (последнее уведомление было за %d дней)",
+			emp.Name, daysUntil, emp.LastNotifyDay)
 
 		if (daysUntil == 14 || daysUntil == 7 || daysUntil == 1 || daysUntil == 0) &&
 			emp.LastNotifyDay != daysUntil {
 			msg := createNotificationMessage(emp.Name, daysUntil, emp.Birthday)
+			log.Printf("Отправка уведомления: %s", msg)
+
 			for _, chatID := range activeChats {
 				if _, err := bot.Send(telebot.ChatID(chatID), msg); err != nil {
 					log.Printf("Ошибка отправки в чат %d: %v", chatID, err)
+				} else {
+					log.Printf("Уведомление отправлено в чат %d", chatID)
 				}
 			}
 
@@ -362,13 +373,22 @@ func daysUntilBirthday(birthday time.Time) int {
 	now := time.Now().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 
-	birthdayThisYear := time.Date(now.Year(), birthday.Month(), birthday.Day(), 0, 0, 0, 0, time.UTC)
+	// Приводим birthday к UTC и игнорируем время (оставляем только дату)
+	birthdayUTC := time.Date(birthday.Year(), birthday.Month(), birthday.Day(), 0, 0, 0, 0, time.UTC)
+	birthdayThisYear := time.Date(now.Year(), birthdayUTC.Month(), birthdayUTC.Day(), 0, 0, 0, 0, time.UTC)
 
 	if today.After(birthdayThisYear) {
 		birthdayThisYear = birthdayThisYear.AddDate(1, 0, 0)
 	}
 
-	return int(birthdayThisYear.Sub(today).Hours() / 24)
+	days := int(birthdayThisYear.Sub(today).Hours() / 24)
+
+	// Если день рождения сегодня, но время еще не наступило (UTC)
+	if days < 0 {
+		days = 0
+	}
+
+	return days
 }
 
 func createNotificationMessage(name string, daysUntil int, date time.Time) string {
