@@ -419,27 +419,24 @@ func checkAndNotifyBirthdays(bot *telebot.Bot, location *time.Location) {
 }
 
 func daysUntilBirthday(birthday time.Time, now time.Time) int {
-	// Приводим даты к одному часовому поясу
-	now = now.In(birthday.Location())
+	// Нормализуем время (убираем часы, минуты, секунды)
+	now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	birthdayThisYear := time.Date(now.Year(), birthday.Month(), birthday.Day(), 0, 0, 0, 0, now.Location())
 
-	// Определяем дату дня рождения в текущем году
-	nextBirthday := time.Date(now.Year(), birthday.Month(), birthday.Day(), 0, 0, 0, 0, now.Location())
-
-	// Если день рождения в этом году уже был, берем следующий год
-	if now.After(nextBirthday) {
-		nextBirthday = nextBirthday.AddDate(1, 0, 0)
+	// Если день рождения уже прошел в этом году
+	if now.After(birthdayThisYear) {
+		birthdayThisYear = birthdayThisYear.AddDate(1, 0, 0)
 	}
 
-	// Вычисляем разницу в днях (округление вниз)
-	hoursUntil := nextBirthday.Sub(now).Hours()
-	daysUntil := int(hoursUntil / 24)
+	// Вычисляем разницу в днях
+	days := int(birthdayThisYear.Sub(now).Hours() / 24)
 
-	// Если осталось меньше 24 часов - считаем как 0 дней (сегодня)
-	if hoursUntil < 24 {
+	// Специальная проверка для сегодняшнего дня
+	if now.Equal(birthdayThisYear) {
 		return 0
 	}
 
-	return daysUntil
+	return days
 }
 
 func createNotificationMessage(name string, daysUntil int, date time.Time) string {
