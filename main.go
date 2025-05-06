@@ -30,6 +30,11 @@ var (
 
 func main() {
 	// Загружаем .env
+	loc, err := time.LoadLocation("Europe/Moscow")
+	if err != nil {
+		log.Fatal("Не удалось загрузить часовой пояс:", err)
+	}
+	time.Local = loc
 	if err := godotenv.Load(); err != nil {
 		log.Println("Файл .env не найден")
 	}
@@ -174,7 +179,7 @@ func notifyHandler(c telebot.Context) error {
 	hasNotifications := false
 
 	for _, emp := range employees {
-		daysUntil := daysUntilBirthday(emp.Birthday)
+		daysUntil := daysUntilBirthday(emp.Birthday, time.Now())
 
 		if daysUntil == 14 || daysUntil == 7 || daysUntil == 1 || daysUntil == 0 {
 			msg := createNotificationMessage(emp.Name, daysUntil, emp.Birthday)
@@ -308,22 +313,61 @@ func getAllActiveChats() ([]int64, error) {
 }
 
 func startDailyBirthdayChecker(bot *telebot.Bot) {
-	location, err := time.LoadLocation("Europe/Moscow")
+	loc, err := time.LoadLocation("Europe/Moscow")
 	if err != nil {
-		log.Println("Ошибка загрузки локации:", err)
-		location = time.UTC
+		log.Fatal("Ошибка загрузки часового пояса:", err)
 	}
 
-	// Первая проверка сразу при запуске
-	checkAndNotifyBirthdays(bot, location)
-
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
-
 	for {
-		select {
-		case <-ticker.C:
-			checkAndNotifyBirthdays(bot, location)
+		now := time.Now().In(loc)
+		log.Printf("Текущее время в Москве: %v", now)
+
+		// Вычисляем время следующей проверки (сегодня в 9:00 или завтра в 9:00)
+		nextCheck := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, loc)
+		if now.After(nextCheck) {
+			nextCheck = nextCheck.Add(24 * time.Hour)
+		}
+
+		sleepDuration := nextCheck.Sub(now)
+		log.Printf("Следующая проверка в %v (через %v)", nextCheck, sleepDuration)
+
+		// Проверяем дни рождения
+		checkBirthdays(bot, now)
+
+		// Ждем до следующего 9:00
+		time.Sleep(sleepDuration)
+	}
+}
+
+func checkBirthdays(bot *telebot.Bot, now time.Time) {
+	employees, err := getAllEmployees()
+	if err != nil {
+		log.Println("Ошибка получения сотрудников:", err)
+		return
+	}
+
+	activeChats, err := getAllActiveChats()
+	if err != nil {
+		log.Println("Ошибка получения чатов:", err)
+		return
+	}
+
+	for _, emp := range employees {
+		daysUntil := daysUntilBirthday(emp.Birthday, now)
+
+		if (daysUntil == 14 || daysUntil == 7 || daysUntil == 1 || daysUntil == 0) &&
+			emp.LastNotifyDay != daysUntil {
+			msg := createNotificationMessage(emp.Name, daysUntil, emp.Birthday)
+
+			for _, chatID := range activeChats {
+				if _, err := bot.Send(telebot.ChatID(chatID), msg); err != nil {
+					log.Printf("Ошибка отправки в чат %d: %v", chatID, err)
+				}
+			}
+
+			if err := updateLastNotifyDay(emp.ID, daysUntil); err != nil {
+				log.Println("Ошибка обновления дня уведомления:", err)
+			}
 		}
 	}
 }
@@ -345,7 +389,7 @@ func checkAndNotifyBirthdays(bot *telebot.Bot, location *time.Location) {
 	}
 
 	for _, emp := range employees {
-		daysUntil := daysUntilBirthday(emp.Birthday)
+		daysUntil := daysUntilBirthday(emp.Birthday, now)
 		log.Printf("Проверка %s: дней до ДР - %d (последнее уведомление было за %d дней)",
 			emp.Name, daysUntil, emp.LastNotifyDay)
 
@@ -369,26 +413,12 @@ func checkAndNotifyBirthdays(bot *telebot.Bot, location *time.Location) {
 	}
 }
 
-func daysUntilBirthday(birthday time.Time) int {
-	now := time.Now().UTC()
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-
-	// Приводим birthday к UTC и игнорируем время (оставляем только дату)
-	birthdayUTC := time.Date(birthday.Year(), birthday.Month(), birthday.Day(), 0, 0, 0, 0, time.UTC)
-	birthdayThisYear := time.Date(now.Year(), birthdayUTC.Month(), birthdayUTC.Day(), 0, 0, 0, 0, time.UTC)
-
-	if today.After(birthdayThisYear) {
-		birthdayThisYear = birthdayThisYear.AddDate(1, 0, 0)
+func daysUntilBirthday(birthday time.Time, now time.Time) int {
+	next := time.Date(now.Year(), birthday.Month(), birthday.Day(), 0, 0, 0, 0, now.Location())
+	if now.After(next) {
+		next = next.AddDate(1, 0, 0)
 	}
-
-	days := int(birthdayThisYear.Sub(today).Hours() / 24)
-
-	// Если день рождения сегодня, но время еще не наступило (UTC)
-	if days < 0 {
-		days = 0
-	}
-
-	return days
+	return int(next.Sub(now).Hours() / 24)
 }
 
 func createNotificationMessage(name string, daysUntil int, date time.Time) string {
