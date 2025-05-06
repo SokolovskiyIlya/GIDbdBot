@@ -332,31 +332,36 @@ func startDailyBirthdayChecker(bot *telebot.Bot) {
 		log.Printf("Следующая проверка в %v (через %v)", nextCheck, sleepDuration)
 
 		// Проверяем дни рождения
-		checkBirthdays(bot, now)
+		checkBirthdays(bot)
 
 		// Ждем до следующего 9:00
 		time.Sleep(sleepDuration)
 	}
 }
 
-func checkBirthdays(bot *telebot.Bot, now time.Time) {
+func checkBirthdays(bot *telebot.Bot) {
+	now := time.Now()
 	employees, err := getAllEmployees()
 	if err != nil {
-		log.Println("Ошибка получения сотрудников:", err)
+		log.Println("Ошибка получения списка сотрудников:", err)
 		return
 	}
 
 	activeChats, err := getAllActiveChats()
 	if err != nil {
-		log.Println("Ошибка получения чатов:", err)
+		log.Println("Ошибка получения списка чатов:", err)
 		return
 	}
 
 	for _, emp := range employees {
 		daysUntil := daysUntilBirthday(emp.Birthday, now)
 
-		if (daysUntil == 14 || daysUntil == 7 || daysUntil == 1 || daysUntil == 0) &&
-			emp.LastNotifyDay != daysUntil {
+		log.Printf("Проверка: %s, ДР: %s, Осталось дней: %d",
+			emp.Name,
+			emp.Birthday.Format("02.01.2006"),
+			daysUntil)
+
+		if daysUntil == 14 || daysUntil == 7 || daysUntil == 1 || daysUntil == 0 {
 			msg := createNotificationMessage(emp.Name, daysUntil, emp.Birthday)
 
 			for _, chatID := range activeChats {
@@ -414,11 +419,27 @@ func checkAndNotifyBirthdays(bot *telebot.Bot, location *time.Location) {
 }
 
 func daysUntilBirthday(birthday time.Time, now time.Time) int {
-	next := time.Date(now.Year(), birthday.Month(), birthday.Day(), 0, 0, 0, 0, now.Location())
-	if now.After(next) {
-		next = next.AddDate(1, 0, 0)
+	// Приводим даты к одному часовому поясу
+	now = now.In(birthday.Location())
+
+	// Определяем дату дня рождения в текущем году
+	nextBirthday := time.Date(now.Year(), birthday.Month(), birthday.Day(), 0, 0, 0, 0, now.Location())
+
+	// Если день рождения в этом году уже был, берем следующий год
+	if now.After(nextBirthday) {
+		nextBirthday = nextBirthday.AddDate(1, 0, 0)
 	}
-	return int(next.Sub(now).Hours() / 24)
+
+	// Вычисляем разницу в днях (округление вниз)
+	hoursUntil := nextBirthday.Sub(now).Hours()
+	daysUntil := int(hoursUntil / 24)
+
+	// Если осталось меньше 24 часов - считаем как 0 дней (сегодня)
+	if hoursUntil < 24 {
+		return 0
+	}
+
+	return daysUntil
 }
 
 func createNotificationMessage(name string, daysUntil int, date time.Time) string {
