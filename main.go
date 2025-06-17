@@ -181,7 +181,7 @@ func notifyHandler(c telebot.Context) error {
 	for _, emp := range employees {
 		daysUntil := daysUntilBirthday(emp.Birthday, time.Now())
 
-		if daysUntil == 14 || daysUntil == 7 || daysUntil == 1 || daysUntil == 0 {
+		if daysUntil <= 14 {
 			msg := createNotificationMessage(emp.Name, daysUntil, emp.Birthday)
 
 			for _, chatID := range activeChats {
